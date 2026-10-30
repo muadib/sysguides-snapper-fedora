@@ -1,144 +1,228 @@
-# SysGuides Snapper Setup for Fedora
+# Snapper + grub-btrfs para Fedora (solo root)
 
-Automated Snapper + grub-btrfs setup for Fedora, including a WAL fix for libdnf5 (DNF5) to ensure proper snapshot rollback after the switch of PackageKit to the DNF5 backend in Fedora 44.
+Configuración automática de Snapper y grub-btrfs para Fedora, con integración con DNF5 (CLI y GUI) y snapshots **solo del sistema** (`/`).
 
----
-
-## ✨ Features
-
-- One-command installation (`./install.sh`)
-- Full Snapper setup for:
-  - Root (`/`)
-  - Home (`/home`)
-- Integration with DNF5 (CLI + GUI)
-- Automatic pre/post snapshots for package transactions
-- Clean snapshot descriptions:
-  - CLI → actual command (e.g. `dnf install vim`)
-  - GUI → simplified (e.g. `GUI install firefox`)
-- Fix for RPM database inconsistency (SQLite WAL issue)
-- grub-btrfs integration for booting into snapshots
-- Automatic GRUB updates
-- Sensible defaults (no unnecessary home timeline snapshots)
+Es una versión adaptada de [sysguides-snapper-fedora](https://github.com/SysGuides/sysguides-snapper-fedora), de Madhu Desai (SysGuides).
 
 ---
 
-## ⚠️ Compatibility
+## 🔀 Diferencias con el original
 
-- Tested on:
-  - Fedora Workstation (GNOME)
-  - Fedora KDE Spin
+| | Original | Esta versión |
+|---|---|---|
+| Configs de Snapper | `root` y `home` | Solo `root` |
+| Timeline de root | Valores por defecto (horario) | 1 snapshot diario, se guardan 7 |
+| Limpieza por número | Valores por defecto | 2-10 normales, 4-10 importantes, borra pre/post vacíos |
+| Instalación de helpers | `restorecon` con glob `snapper-*.sh` | Uno por uno, sin depender del nombre |
+| Contenedores | — | Instala `distrobox` y `podman` |
+| libvirt | — | NOCOW en `/var/lib/libvirt/images` si existe y está vacío |
+| Chequeos previos | Btrfs | Fedora, Btrfs, archivos del repo, `/boot` separado, referencias a `home` |
+| Verificación final | No | Sí: si algo falló, termina con error |
 
-### ✅ Recommended Setup
-
-Works best with:
-
-- 🌐 [How to Setup Fedora 44 with Btrfs Snapshot and Rollback Support](https://sysguides.com/fedora-44-with-btrfs-snapshot-and-rollback-support)
-- 📺 [Never Break Fedora 44 Again! Complete Snapper & Rollback Guide](https://youtu.be/d-CafjZf2M4) (YouTube walkthrough)
-
-✔ Full compatibility (including `/boot` rollback)
-
-> ⚠️ **Note on default Fedora installations**
-> 
-> This setup also works on the default Fedora Btrfs layout.  
-> However:
-> 
-> - `/boot` is not on Btrfs  
-> - Kernel rollback is **not fully supported**  
-> - Snapshots restore the root filesystem, but not `/boot`
-> 
-> For full rollback capability, follow the SysGuides setup.
+**¿Por qué sin snapshots de home?** Igual que en openSUSE: snapshots para el sistema y backup para el usuario. Un snapshot de home vive en el mismo disco, retiene bloques de todo lo que cambia (contenedores, cachés, descargas) y un rollback de home puede pisar trabajo tuyo. Para tus datos, usá una herramienta de backup (Borg, Restic, etc.).
 
 ---
 
-## 🚀 Installation
+## ✨ Qué incluye
+
+- Instalación con un solo comando (`./install.sh`)
+- Snapper para `/` con política de limpieza conservadora
+- Snapshots pre/post automáticos en cada transacción de paquetes:
+  - DNF5 por línea de comandos (`dnf`)
+  - GNOME Software
+  - KDE Plasma Discover
+- Fix de inconsistencia de la base RPM (SQLite WAL) del proyecto original
+- grub-btrfs para bootear snapshots desde el menú de GRUB
+- Btrfs Assistant para gestionar snapshots de forma gráfica
+- distrobox + podman
+
+---
+
+## ⚠️ Requisitos
+
+- Fedora con DNF5 (probado sobre el layout de Fedora 44)
+- Raíz en Btrfs
+- **Recomendado:** el layout de la guía [How to Setup Fedora 44 with Btrfs Snapshot and Rollback Support](https://sysguides.com/fedora-44-with-btrfs-snapshot-and-rollback-support), con `/boot` dentro del subvolumen `root`
+
+> ⚠️ **Sobre instalaciones por defecto de Fedora**
+>
+> El script también funciona con el layout default, pero ahí `/boot` es una partición aparte:
+>
+> - Los snapshots restauran la raíz, pero no el kernel
+> - El rollback de kernel no es completo
+>
+> El script detecta este caso y pregunta antes de seguir.
+
+---
+
+## 🚀 Instalación
+
+Ejecutalo como usuario normal (no con `sudo`), desde la raíz del repo:
 
 ```bash
 sudo dnf install git -y
-git clone https://github.com/SysGuides/sysguides-snapper-fedora
+git clone https://github.com/muadib/sysguides-snapper-fedora.git
 cd sysguides-snapper-fedora
 chmod +x install.sh
 ./install.sh
 ```
 
----
+Al final, el script verifica que estén:
 
-## 🚀 Basic Usage
+- La config de Snapper para `root`
+- `/etc/dnf/libdnf5-plugins/actions.d/snapper.actions`
+- `grub-btrfsd.service` activo
+- `snapper-cleanup.timer` activo (y `snapper-timeline.timer` si el timeline está habilitado)
+- `distrobox` instalado
 
-### Automatic snapshots with DNF
-
-This setup works with:
-
-- DNF5 command line (`dnf`)
-- GNOME Software
-- KDE Plasma Discover
-
-This is possible because Fedora 44 switches PackageKit to the new DNF5 backend built on libdnf5, allowing proper Snapper integration for both CLI and GUI package management.
-
-In this example, we use `htop` as a sample package and assume the PRE and POST snapshot numbers created are `1` and `2`.
-
-This installs the package and automatically creates PRE and POST snapshots.
+### Prueba recomendada
 
 ```bash
-sudo dnf install htop
+sudo dnf install -y htop
+snapper ls
 ```
 
-This shows the filesystem changes between snapshot `1` (PRE) and snapshot `2` (POST).
+Tienen que aparecer dos snapshots nuevos (pre y post) con la descripción de la transacción.
+
+---
+
+## ⚙️ Configuración
+
+Los ajustes están al principio de `install.sh`:
+
+```bash
+NUMBER_LIMIT="2-10"
+NUMBER_LIMIT_IMPORTANT="4-10"
+
+TIMELINE_CREATE="yes"
+TIMELINE_LIMIT_HOURLY="0"
+TIMELINE_LIMIT_DAILY="7"
+TIMELINE_LIMIT_WEEKLY="0"
+TIMELINE_LIMIT_MONTHLY="0"
+TIMELINE_LIMIT_YEARLY="0"
+```
+
+- **Sin timeline:** `TIMELINE_CREATE="no"`. El script deshabilita `snapper-timeline.timer` y quedan solo los snapshots de DNF y los manuales.
+- El script se puede volver a ejecutar: si la config de `root` ya existe, solo actualiza los valores.
+
+Para cambiar la política después de instalar, sin volver a correr el script:
+
+```bash
+sudo snapper -c root set-config TIMELINE_LIMIT_DAILY=14
+```
+
+---
+
+## 🧭 Uso básico
+
+### Snapshots automáticos con DNF
+
+Cada `dnf install`, `dnf upgrade` o `dnf remove`, y cada instalación desde Discover o GNOME Software, crea un par de snapshots pre/post.
+
+En los ejemplos, los snapshots PRE y POST son el `1` y el `2`.
+
+Ver qué cambió entre los dos:
 
 ```bash
 snapper status 1..2
+snapper diff 1..2 /etc/algun-archivo
 ```
 
-This reverts all filesystem changes made between those two snapshots.
+Revertir todos los cambios de esa transacción:
 
 ```bash
 sudo snapper undochange 1..2
 ```
 
-This restores only the specific file `/etc/hosts` from snapshot `2` to the current system, where `0` represents the current live state.
+Restaurar un solo archivo desde el snapshot `2` al estado actual (`0` es el sistema en vivo):
 
 ```bash
 sudo snapper undochange 2..0 /etc/hosts
 ```
 
-### Manual PRE and POST snapshots
+### Snapshots manuales pre/post
 
-This is best used when manually testing something important and you want a clean way to revert everything afterward.
-
-This creates a restore point before starting your testing.
+Útil antes de tocar algo importante del sistema (repos de terceros, cambios en `/etc`, drivers):
 
 ```bash
-snapper -c root create -t pre -c number -d "Pre test"
-snapper -c home create -t pre -c number -d "Pre test"
+snapper -c root create -t pre -c number -d "Antes de probar X"
+# ... hacés los cambios ...
+snapper -c root create -t post --pre-number <pre> -c number -d "Después de probar X"
 ```
 
-Do all your testing.
-
-This creates the matching POST snapshots linked to the PRE snapshots.
-
-```bash
-snapper -c root create -t post --pre-number <pre-number> -c number -d "Post test"
-snapper -c home create -t post --pre-number <pre-number> -c number -d "Post test"
-```
-
-This shows all available snapshots for both root and home.
-
-```bash
-snapper -c root ls
-snapper -c home ls
-```
-
-This restores both system files and application/user state back to the previous clean state.
+Para revertir:
 
 ```bash
 sudo snapper -c root undochange <pre>..<post>
-sudo snapper -c home undochange <pre>..<post>
 ```
 
-### Full rollback using grub-btrfs
+### Rollback completo con grub-btrfs
 
-1. Reboot the system  
-2. From the GRUB menu, boot into the snapshot you want to restore  
-3. Open Btrfs Assistant  
-4. Click Restore / Rollback
+Cuando el sistema no arranca o necesitás volver todo atrás:
 
-This is useful when the system no longer boots correctly or when a full system rollback is needed.
+1. Reiniciá
+2. En el menú de GRUB, entrá a **Fedora snapshots** y elegí el snapshot
+3. Una vez dentro, abrí **Btrfs Assistant**
+4. Elegí el snapshot y hacé **Restore**
+5. Reiniciá
+
+El snapshot se bootea en modo solo lectura con una capa overlay, así que los cambios que hagas en esa sesión no se guardan.
+
+---
+
+## ⬆️ Antes de un upgrade de versión de Fedora
+
+```bash
+snapper -c root create -t pre -c number -d "Antes de Fedora <N>"
+```
+
+Para tu home, hacé un backup antes (por ejemplo con Borg) de al menos `~/.config` y `~/.local/share`. Las aplicaciones suelen migrar su configuración al actualizarse, y un rollback del sistema no la vuelve atrás.
+
+Después del upgrade:
+
+```bash
+snapper -c root create -t post --pre-number <pre> -c number -d "Después de Fedora <N>"
+```
+
+---
+
+## 📦 Distrobox
+
+- Los contenedores rootless viven en `~/.local/share/containers`, fuera de los snapshots de `root`. Un rollback del sistema no los toca.
+- Si hacés backup de tu home, conviene excluir esa carpeta porque suele pesar varios GB:
+  ```bash
+  borg create ... --exclude ~/.local/share/containers
+  ```
+- `/var/lib/containers` (contenedores con root) está en su propio subvolumen en el layout de la guía, también fuera de los snapshots.
+
+---
+
+## 🩺 Solución de problemas
+
+**El script se corta a mitad de camino.** Usa `set -euo pipefail` y se detiene en el primer error. Para ver exactamente dónde:
+
+```bash
+bash -x ./install.sh 2>&1 | tee install.log
+```
+
+**DNF no crea snapshots.** Verificá que exista el archivo de acciones:
+
+```bash
+ls -l /etc/dnf/libdnf5-plugins/actions.d/snapper.actions
+```
+
+**Quedó una config de `home` de una instalación anterior.** El script no la borra. Para eliminarla (borra sus snapshots, no tus archivos):
+
+```bash
+sudo snapper -c home delete-config
+```
+
+**`/.snapshots` existe pero no hay config de root.** Si está vacío, el script lo limpia solo. Si tiene contenido, frena para que lo revises a mano.
+
+---
+
+## 📄 Licencia y créditos
+
+MIT, igual que el proyecto original.
+
+Basado en [sysguides-snapper-fedora](https://github.com/SysGuides/sysguides-snapper-fedora) de Madhu Desai ([SysGuides](https://sysguides.com)). grub-btrfs es de [Antynea](https://github.com/Antynea/grub-btrfs).
